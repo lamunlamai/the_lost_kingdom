@@ -1,5 +1,7 @@
 # core/player.py
 
+from core.inventory import Inventory
+
 class Player:
     def __init__(self, name):
         self.name = name
@@ -7,6 +9,9 @@ class Player:
         self.xp = 0
         self.gold = 0
         self.hp = 100  # เพิ่มพลังชีวิต (HP)
+        self.inventory = Inventory()  # เพิ่ม Inventory
+        self.attack_power = 10  # พลังโจมตีเริ่มต้น
+        self.defense = 5        # พลังป้องกันเริ่มต้น
 
     def gain_xp(self, amount):
         self.xp += amount
@@ -27,3 +32,5 @@ class Player:
 
     def show_status(self):
         print(f"Player: {self.name} | Level: {self.level} | XP: {self.xp} | Gold: {self.gold} | HP: {self.hp}")
+        print(f"Attack Power: {self.attack_power} | Defense: {self.defense}")
+        self.inventory.show_inventory()
