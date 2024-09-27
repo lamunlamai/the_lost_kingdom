@@ -30,6 +30,18 @@ def create_tables():
         )
     ''')
     
+    # สร้างตาราง friends
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS friends (
+        user1 TEXT,
+        user2 TEXT,
+        status TEXT,  -- 'pending', 'accepted', 'blocked'
+        PRIMARY KEY (user1, user2),
+        FOREIGN KEY (user1) REFERENCES players(name),
+        FOREIGN KEY (user2) REFERENCES players(name)
+    )
+    """)
+    
     # สร้างตาราง items
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS items (
@@ -162,3 +174,37 @@ def load_player(name, password=None):
     else:
         conn.close()
         return None
+
+def add_friend(user1, user2):
+    conn = sqlite3.connect('game.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO friends (user1, user2, status) VALUES (?, ?, 'pending')", (user1, user2))
+    conn.commit()
+    conn.close()
+
+def accept_friend(user1, user2):
+    conn = sqlite3.connect('game.db')
+    cursor = conn.cursor()
+    cursor.execute("UPDATE friends SET status = 'accepted' WHERE user1 = ? AND user2 = ?", (user2, user1))
+    cursor.execute("INSERT OR IGNORE INTO friends (user1, user2, status) VALUES (?, ?, 'accepted')", (user1, user2))
+    conn.commit()
+    conn.close()
+
+def remove_friend(user1, user2):
+    conn = sqlite3.connect('game.db')
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM friends WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", (user1, user2, user2, user1))
+    conn.commit()
+    conn.close()
+
+def list_friends(user):
+    conn = sqlite3.connect('game.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT user2 FROM friends WHERE user1 = ? AND status = 'accepted'
+    UNION
+    SELECT user1 FROM friends WHERE user2 = ? AND status = 'accepted'
+    """, (user, user))
+    friends = cursor.fetchall()
+    conn.close()
+    return [f[0] for f in friends]

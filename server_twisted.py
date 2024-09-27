@@ -1,16 +1,31 @@
 # server_twisted.py
 from twisted.internet import reactor, protocol
 from database.db_manager import create_tables, load_player, save_player, hash_password
+from database.db_manager import accept_friend, add_friend, remove_friend, list_friends
 from core.player import Player
 from core.game_logic import initiate_pvp
 from core.item import healing_potion, Weapon, Armor, Item
-
+import signal
+import logging
+import sqlite3
 HOST = '127.0.0.1'
 PORT = 65432
 
+def shutdown(signum, frame):
+    print("Shutting down server...")
+    reactor.stop()
+
+signal.signal(signal.SIGINT, shutdown)
+
 class GameProtocol(protocol.Protocol):
     def connectionMade(self):
-        print(f"Factory is: {self.factory}")  # เพื่อตรวจสอบว่า factory ถูกกำหนดหรือไม่
+        logging.debug(f"New connection from {self.transport.getPeer()}")
+        # ตรวจสอบว่า factory ถูกกำหนดให้กับโปรโตคอลแล้ว
+        if self.factory is None:
+            print("Factory is not set for this protocol instance!")
+            return
+
+        print(f"Factory is: {self.factory}")
         self.player = None
         self.factory.clients.append(self)
         self.transport.write(b"Welcome to The Lost Kingdom!\n")
@@ -20,7 +35,8 @@ class GameProtocol(protocol.Protocol):
         if self.player and self.player.name in self.factory.logged_in_players:
             del self.factory.logged_in_players[self.player.name]
             print(f"{self.player.name} has disconnected.")
-        self.factory.clients.remove(self)
+        if self in self.factory.clients:
+            self.factory.clients.remove(self)
         print(f"Connection lost from {self.transport.getPeer()}")
 
     def dataReceived(self, data):
@@ -31,6 +47,7 @@ class GameProtocol(protocol.Protocol):
             self.transport.write(response.encode())
 
     def process_command(self, command):
+        logging.debug(f"Processing command: {command}")
         tokens = command.split()
         if not tokens:
             return "Invalid command.\n"
@@ -163,6 +180,73 @@ class GameProtocol(protocol.Protocol):
             )
             return help_text
 
+        elif cmd == "addfriend":
+            if not self.player:
+                return "Please login first.\n"
+            if len(tokens) != 2:
+                return "Usage: addfriend <username>\n"
+            friend_username = tokens[1]
+            if friend_username == self.player.name:
+                return "You cannot add yourself as a friend.\n"
+            friend = load_player(friend_username)
+            if not friend:
+                return "User not found.\n"
+            add_friend(self.player.name, friend_username)
+            return f"Friend request sent to {friend_username}.\n"
+        
+        elif cmd == "acceptfriend":
+            if not self.player:
+                return "Please login first.\n"
+            if len(tokens) != 2:
+                return "Usage: acceptfriend <username>\n"
+            friend_username = tokens[1]
+            # ตรวจสอบว่ามีคำขอเป็นเพื่อนจาก friend_username หรือไม่
+            conn = sqlite3.connect('game.db')
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM friends WHERE user1 = ? AND user2 = ? AND status = 'pending'", (friend_username, self.player.name))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                accept_friend(self.player.name, friend_username)
+                return f"You are now friends with {friend_username}.\n"
+            else:
+                return "No pending friend request from that user.\n"
+            
+        elif cmd == "removefriend":
+            if not self.player:
+                return "Please login first.\n"
+            if len(tokens) != 2:
+                return "Usage: removefriend <username>\n"
+            friend_username = tokens[1]
+            remove_friend(self.player.name, friend_username)
+            return f"Removed {friend_username} from your friends.\n"
+        
+        elif cmd == "listfriends":
+            if not self.player:
+                return "Please login first.\n"
+            friends = list_friends(self.player.name)
+            if not friends:
+                return "You have no friends.\n"
+            else:
+                return "Your friends:\n" + "\n".join(friends) + "\n"
+        
+        elif cmd == "pm":
+            if not self.player:
+                return "Please login first.\n"
+            if len(tokens) < 3:
+                return "Usage: pm <username> <message>\n"
+            recipient = tokens[1]
+            message = ' '.join(tokens[2:])
+            friends = list_friends(self.player.name)
+            if recipient not in friends:
+                return "You can only send messages to your friends.\n"
+            recipient_protocol = self.factory.logged_in_players.get(recipient)
+            if not recipient_protocol:
+                return "Recipient is not online.\n"
+            recipient_protocol.transport.write(f"{self.player.name} (private): {message}\n".encode())
+            return "Message sent.\n"
+
+
         else:
             return "Unknown command. Type 'help' for a list of commands.\n"
 
@@ -176,6 +260,7 @@ class GameFactory(protocol.Factory):
         proto = GameProtocol()
         proto.factory = self  # กำหนด factory ให้กับโปรโตคอล
         self.clients.append(proto)  # เพิ่มไคลเอนต์ใน factory.clients
+        print(f"Added new client from {addr}")
         return proto
 
     def broadcast(self, message, exclude=None):
@@ -210,6 +295,7 @@ def initiate_pvp(player1, player2):
             player1.gold += 10
             break
     return result
+
 
 def main():
     factory = GameFactory()
