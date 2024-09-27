@@ -4,7 +4,9 @@ from core.inventory import Inventory
 
 class Player:
     def __init__(self, name):
+        self.id = None  # เพิ่ม attribute id
         self.name = name
+        self.password = None  # เพิ่ม attribute password
         self.level = 1
         self.xp = 0
         self.gold = 0

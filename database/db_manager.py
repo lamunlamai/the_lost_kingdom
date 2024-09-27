@@ -2,7 +2,8 @@
 import sqlite3
 from core.player import Player
 from core.item import Item, Weapon, Armor
-import json  # สำหรับการเก็บ effect เป็น JSON
+import json
+import hashlib  # สำหรับการแฮชรหัสผ่าน
 
 def connect_db(db_name="game.db"):
     """เชื่อมต่อกับฐานข้อมูล SQLite"""
@@ -19,6 +20,7 @@ def create_tables():
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE,
+            password TEXT,  -- เพิ่มฟิลด์ password
             level INTEGER,
             xp INTEGER,
             gold INTEGER,
@@ -54,26 +56,34 @@ def create_tables():
     conn.commit()
     conn.close()
 
+def hash_password(password):
+    """แฮชรหัสผ่านด้วย SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def save_player(player):
     """บันทึกข้อมูลผู้เล่นลงฐานข้อมูล รวมถึง Inventory"""
     conn = connect_db()
     cursor = conn.cursor()
     
     # บันทึกข้อมูลผู้เล่น
-    cursor.execute('''
-        INSERT OR REPLACE INTO players (id, name, level, xp, gold, hp, attack_power, defense)
-        VALUES (
-            (SELECT id FROM players WHERE name = ?),
-            ?, ?, ?, ?, ?, ?, ?
-        )
-    ''', (player.name, player.name, player.level, player.xp, player.gold, player.hp, player.attack_power, player.defense))
+    if player.id:
+        # ผู้เล่นมีอยู่แล้วในฐานข้อมูล, ทำการอัปเดตข้อมูล
+        cursor.execute('''
+            UPDATE players
+            SET name = ?, password = ?, level = ?, xp = ?, gold = ?, hp = ?, attack_power = ?, defense = ?
+            WHERE id = ?
+        ''', (player.name, player.password, player.level, player.xp, player.gold, player.hp, player.attack_power, player.defense, player.id))
+    else:
+        # ผู้เล่นใหม่, ทำการแทรกข้อมูล
+        cursor.execute('''
+            INSERT INTO players (name, password, level, xp, gold, hp, attack_power, defense)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (player.name, player.password, player.level, player.xp, player.gold, player.hp, player.attack_power, player.defense))
+        player.id = cursor.lastrowid
     
     # บันทึกข้อมูล Inventory
     # ลบข้อมูล Inventory เดิมก่อนเพื่อป้องกันการซ้ำซ้อน
-    cursor.execute('SELECT id FROM players WHERE name = ?', (player.name,))
-    player_id = cursor.fetchone()[0]
-    
-    cursor.execute('DELETE FROM inventory WHERE player_id = ?', (player_id,))
+    cursor.execute('DELETE FROM inventory WHERE player_id = ?', (player.id,))
     
     for item_name, details in player.inventory.items.items():
         item = details['item']
@@ -93,17 +103,22 @@ def save_player(player):
         
         # เพิ่มไอเท็มลงในตาราง inventory
         cursor.execute('INSERT INTO inventory (player_id, item_id, quantity) VALUES (?, ?, ?)',
-                       (player_id, item_id, quantity))
+                       (player.id, item_id, quantity))
     
     conn.commit()
     conn.close()
 
-def load_player(name):
+def load_player(name, password=None):
     """โหลดข้อมูลผู้เล่นและ Inventory จากฐานข้อมูล"""
     conn = connect_db()
     cursor = conn.cursor()
     
-    cursor.execute('SELECT id, name, level, xp, gold, hp, attack_power, defense FROM players WHERE name = ?', (name,))
+    if password:
+        hashed_password = hash_password(password)
+        cursor.execute('SELECT id, name, level, xp, gold, hp, attack_power, defense FROM players WHERE name = ? AND password = ?', (name, hashed_password))
+    else:
+        cursor.execute('SELECT id, name, level, xp, gold, hp, attack_power, defense FROM players WHERE name = ?', (name,))
+    
     result = cursor.fetchone()
     
     if result:
@@ -115,6 +130,7 @@ def load_player(name):
         player.hp = result[5]
         player.attack_power = result[6]
         player.defense = result[7]
+        player.password = result[1]  # Placeholder, actual password handling in main.py
         
         # โหลด Inventory
         cursor.execute('SELECT item_id, quantity FROM inventory WHERE player_id = ?', (player.id,))
